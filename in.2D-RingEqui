@@ -1,0 +1,130 @@
+# Initializing the system
+dimension	2
+units		lj
+atom_modify	map array
+atom_style	sphere
+boundary	f f p
+#read_data	initconf.d
+read_restart	cfg-Kn2000-phi0.8-GammaN500-RadStep0.rst
+set		type 1*2 mass 1.0
+comm_modify 	vel yes				# so that velocities are stored by ghost atoms		
+neighbor	0.3 bin				# skin style
+neigh_modify	delay 0 every 1 check yes 	# getting the advantage of skin use check yes (default settings)
+
+# Pair interaction parameters
+#======================================================================================================
+variable	phi		equal	0.8
+variable	Kn		equal	2000.0 #200000.0
+variable	KnWall		equal	${Kn}*5
+variable	Kt		equal	0.0
+variable	Gamman		equal	500.0
+variable	Gammat		equal	0.0
+variable	xmu		equal	0.0
+variable	dampflag	equal	0      #(0-->excluded tangential damping force)
+variable	damp		equal	0.4
+variable	MyEvery		equal	5e5
+variable	MyThermo	equal	1e4
+variable	ForceMag	atom    'sqrt(fx^2+fy^2)'
+variable	RadStart	equal	107.529066 #$(xhi) # The radius of a circle inside square is half the length of a side
+timestep	0.00001
+variable	filename	string Kn${Kn}-phi${phi}-GammaN${Gamman}
+
+#======================================================================================================
+pair_style	gran/hertz/history ${Kn} ${Kt} ${Gamman} ${Gammat} ${xmu} ${dampflag}
+pair_coeff	* * 
+      
+#======================================================================================================
+# Preparing for jammed system.
+# Radius of ring container is decreased in steps of ${dRad} to ${endRad}.
+# After decreasing each ${dRad}, system is let to evolve for 
+# ${runperdRad} time steps so that all the forces are annealed with the Halt condition. 
+
+# setting several variables
+# Here redefining parameters for increasing the radius and get a Jammed system with non-zero pressure 
+variable	HaltCondition	equal	1e-8
+variable	dRad		equal	0.05			# delta increment of force Radius
+variable	endRad		equal	100.0 #${RadStart}   		# ending value of the radius increment 
+variable	stivals		equal	floor((${RadStart}-${endRad})/${dRad})	# Size of the for loop
+variable	sstep		equal	0
+variable	runperdRad	equal	2e9				# microcanonical run after an increment of force
+variable	interval	equal	1				# dumping information after every these many steps
+
+print           "# step Radius temp press" file Thermo-Kn${Kn}-TargetRad${endRad}-Ring.dat screen no
+
+# For loop begins here
+#======================================================================================================
+variable i loop 0 ${stivals}
+label            defloop
+reset_timestep  0
+variable	Radius		equal	${RadStart}-${i}*${dRad}
+region		mySphere sphere 0.0 0.0 0.0 ${Radius} side in #Defining the spherical container
+fix		mySphere all wall/gran/region hertz/history ${KnWall} ${Kt} ${Gamman} ${Gammat} ${xmu} ${dampflag} region mySphere #For wall-grain interaction
+
+fix             NVE all nve/sphere
+fix             VISC all viscous ${damp}
+fix             99 all enforce2d     # zero out the z-dimension velocity
+
+# Computing properties
+#======================================================================================================
+compute		cfx all reduce max fx
+compute		cfy all reduce max fy
+
+compute		tsph all temp/sphere
+compute		myTemp all temp/com
+
+compute		gpres all pressure tsph virial			# global pressure tensor (virial part)
+compute		myGpres all pressure myTemp virial 		# global pressure tensor (virial part) #HC
+
+variable	maxforce equal 0.5*(abs(c_cfx)+abs(c_cfy))
+
+thermo_modify	temp tsph					# temp including both the translational and rotational ke
+thermo_modify	temp myTemp					# temp excluding COM velocity 	#HC
+thermo		${MyThermo}
+thermo_style	custom step ke pe etotal temp press pxx pyy pxy c_cfx c_cfy
+
+dump		dc all custom  ${MyEvery} dump-${filename}-RadStep${i}.lammpstrj id type radius x y v_ForceMag
+dump_modify	dc  format line '%d %d %0.4lf %0.16lf %0.16lf %0.16lf' sort id
+fix		HALT all halt 1 v_maxforce < ${HaltCondition}  error continue	
+run		${runperdRad} 
+unfix           HALT
+
+#Printing the data after the halt condition is met
+#======================================================================================================
+#Printing the data and restart file
+variable        ssave equal ${sstep}%${interval}
+if "${ssave} == 0" then &
+"dump		refdc all custom  1 dump-${filename}-Reference-RadStep${i}.lammpstrj id type radius x y v_ForceMag" &
+"dump_modify	refdc  format line '%d %d %0.4lf %0.16lf %0.16lf %0.16lf' sort id" &
+"run            0" &
+"undump		refdc" 
+
+if "${ssave} == 0" then &
+"print          '${i} ${Radius} $(ke) $(press)' append Thermo-Kn${Kn}-TargetRad${endRad}-Ring.dat screen no" &
+"run 0" &
+"write_restart  cfg-${filename}-RadStep${i}.rst"
+
+
+# Creating a directory and moving all results data to the directory
+#======================================================================================================
+variable	DirName	string	${filename}-RadStep${i}
+shell /usr/bin/mkdir ${DirName}
+shell /usr/bin/mv *RadStep${i}* ./${DirName}
+#shell /usr/bin/mv Thermo-Kn${Kn}-TargetRad${endRad}-Ring.dat ./${DirName}
+
+
+
+unfix		mySphere
+unfix		NVE
+unfix		VISC
+unfix		99
+undump		dc
+uncompute	cfx
+uncompute	cfy
+uncompute	tsph
+uncompute	myTemp
+uncompute	gpres
+uncompute	myGpres
+region          mySphere delete
+
+next i
+jump in.2D-RingEqui defloop

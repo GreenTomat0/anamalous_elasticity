@@ -1,0 +1,134 @@
+units		lj
+atom_style      sphere
+boundary        f f p
+dimension	2
+comm_modify     vel yes
+read_restart	cfg-Kn200000-phi0.8-GammaN500-RadStep81.rst	#Change this accordingly
+set		type 1*2 mass 1.0
+neighbor	0.3 bin						#skin style
+neigh_modify	delay 0 every 1 check yes 			#getting the advantage of skin use check yes (default settings)
+reset_timestep	0
+
+# Defining potential parameters
+#======================================================================================================
+variable	nAtom		equal	count(all)   #Total number of atoms
+variable	phi		equal	0.844377		#Change this accordingly
+variable	Kn		equal	200000.0
+variable	KnWall		equal	5*${Kn}   #*1e1
+variable	Kt		equal	0.0
+variable	Gamman		equal	500.0
+variable	Gammat		equal	0.0
+variable	xmu		equal	0.0
+variable	dampflag	equal	0			#(0-->excluded tangential damping force)
+variable	damp		equal	0.9
+variable	delta		equal	1.01
+variable	stepLimit	equal	2e9
+variable	MyEvery		equal	1e5
+#variable	RadStart	equal	$(xhi) # The radius of a circle inside square is half the length of a side
+variable	RadStart	equal	148.019063
+variable	CurvRad		equal	1.5*${RadStart}           #Change this accordingly
+variable	HaltCondition	equal	1e-10
+variable	ForceMag	atom    'sqrt(fx^2+fy^2)'
+variable	filename	string 	Kn${Kn}-phi${phi}-GammaN${Gamman}-Inflate${delta}
+timestep	0.00001
+
+#Inflating the diameter based on the function
+#======================================================================================================
+variable i loop ${nAtom}
+label myloop
+variable rSqr equal x[${i}]*x[${i}]+y[${i}]*y[${i}]
+variable Deter equal (4*${CurvRad}*${CurvRad}-${RadStart}*${RadStart})
+variable Func equal 2*${CurvRad}*sqrt(${Deter})/(${rSqr}+${Deter})
+variable Func equal sqrt(${Func})
+variable Type equal type[${i}]
+variable dia1 equal 1.4
+if "${Type} == 2" then &
+   "variable dia1 equal 1.0"
+variable NewDia equal ${Func}*${dia1}
+set atom ${i} diameter ${NewDia}
+next i
+jump SELF myloop
+
+# Defining the spherical container
+#======================================================================================================
+region		container sphere 0.0 0.0 0.0 ${RadStart} side in
+
+# Defining the pair interactions
+#======================================================================================================
+pair_style	gran/hertz/history ${Kn} ${Kt} ${Gamman} ${Gammat} ${xmu} ${dampflag}
+pair_coeff	* * 
+
+fix		container all wall/gran/region hertz/history ${KnWall} ${Kt} ${Gamman} ${Gammat} ${xmu} ${dampflag} region container
+
+fix             NVE all nve/sphere
+fix		VISC all viscous ${damp}
+fix		99 all enforce2d     # zero out the z-dim. velocity and forces
+
+print           "# step ke temp pxx pyy pxy press" file Thermo-${filename}-Ring.dat screen no
+
+# Computing and printing thermo properties
+#======================================================================================================
+compute		cfx all reduce max fx
+compute		cfy all reduce max fy
+
+compute		tsph all temp/sphere
+compute		myTemp all temp/com
+
+compute		gpres all pressure tsph virial			# global pressure tensor (virial part)
+compute		myGpres all pressure myTemp virial 		# global pressure tensor (virial part) #HC
+
+variable	maxforce equal 0.5*(abs(c_cfx)+abs(c_cfy))
+
+thermo_modify	temp tsph					# temp including both the transnational and rotational ke
+thermo_modify	temp myTemp					# temp excluding COM velocity 	#HC
+
+thermo_style	custom step ke pe etotal temp pxx pyy pxy press c_cfx c_cfy
+
+thermo		${MyEvery}
+
+# Computing displacements 
+compute		MyDisp all displace/atom
+
+
+dump		dc all custom  ${MyEvery} dump-${filename}.lammpstrj id type radius x y v_ForceMag
+dump_modify	dc  format line '%d %d %0.4lf %0.16lf %0.16lf %0.16lf' sort id
+dump		dcDisp all custom  ${MyEvery} dump-${filename}-Disp.lammpstrj id x y c_MyDisp[1] c_MyDisp[2] c_MyDisp[4]
+dump_modify	dcDisp  format line '%d %0.16lf %0.16lf %0.16lf %0.16lf %0.16lf' sort id
+fix		HALT all halt 1 v_maxforce < ${HaltCondition}  error continue	
+run		${stepLimit}
+
+# Writing the restart and end state files
+dump		dcEnd all custom  1 dump-${filename}-End.lammpstrj id type radius x y v_ForceMag
+dump_modify	dc  format line '%d %d %0.4lf %0.16lf %0.16lf %0.16lf' sort id
+dump		dcDispEnd all custom  1 dump-${filename}-Disp-End.lammpstrj id x y c_MyDisp[1] c_MyDisp[2] c_MyDisp[3]
+dump_modify	dcDisp  format line '%d %0.16lf %0.16lf %0.16lf %0.16lf %0.16lf' sort id
+run		0
+print		'$(step) $(ke) $(temp) $(pxx) $(pyy) $(pxy) $(press)' append Thermo-${filename}-Ring.dat screen no
+write_restart	cfg-${filename}.rst
+
+# Creating a directory and moving all results data to the directory
+#======================================================================================================
+shell mkdir ${filename}
+shell /usr/bin/mv *-${filename}* ./${filename}
+shell /usr/bin/mv Thermo-Kn${Kn}-Inflate${delta}-Ring.dat ./${filename}
+shell /usr/bin/mv log.lammps ./${filename}
+
+
+unfix		container
+unfix		NVE
+unfix		VISC
+unfix           HALT
+unfix		99
+undump		dc
+undump		dcDisp
+uncompute	cfx 
+uncompute	cfy 
+uncompute	tsph
+uncompute	myTemp
+uncompute	gpres
+uncompute	myGpres
+uncompute	MyDisp
+undump		dcEnd
+undump		dcDispEnd
+#======================Script ends here.===============================================================
+
