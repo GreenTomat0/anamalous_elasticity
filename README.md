@@ -4,8 +4,10 @@ This project aims to study the behavior of the displacement fields arising in th
 
 The primary computations are performed using <a href="https://www.lammps.org/#gsc.tab=0">LAMMPS</a>. Key LAMMPS input files include:
 <ul>
-  <li>in.2D-Ring-Inflate</li>
-  <li>in.2D-RingEqui</li>
+  <li>GetConfigRing - executable file to generate initial configuration.</li>
+  <li>in.2D-RingEqui - LAMMPS input file for the first part of the simulation. To generate the system with 
+    a single value of desired pressure or to get the equilibrated system at a range of pressure values. </li>
+  <li>in.2D-Ring-Inflate - LAMMPS input file the inflation run</li>
 </ul>
 
 Supplemental computations are performd in Python and include 
