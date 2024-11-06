@@ -15,4 +15,4 @@ Supplemental computations are performd in Python and include
   <li>Computing boundary pressure, etc.</li>
 </ul>
 
-Full description of the project here --> <a href="https://drive.google.com/file/d/1s6msOLkYqgoxFNk0Dq8K2ntTD9V-ua41/view?usp=drive_link" target = "_blank">Displacement fields in amorphous solids...</a>
+Full description of the project here --> <a href="https://drive.google.com/file/d/1s6msOLkYqgoxFNk0Dq8K2ntTD9V-ua41/view?usp=drive_link" target="_blank">Displacement fields in amorphous solids...</a>
